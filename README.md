@@ -32,7 +32,7 @@ Jellyfin itself doesn't expose historical per-session watch duration. This proje
 1. **Deduplicate Toggl** - Removes duplicate time entries, including a second pass that clusters entries with the same title within 24 hours and keeps only the most recently created one
 2. **Sync** - Queries the Playback Reporting plugin for sessions in the last `JELLYFIN_HISTORY_HOURS` (default: 24) with actual watched time over `JELLYFIN_MIN_DURATION_MINUTES` (default: 10), and creates or updates a Toggl entry per session, using a persistent state file (`.sync_state.json`) to map each Jellyfin session to its Toggl entry ID
 
-Because a Playback Reporting row is written at playback **start** and its duration keeps growing until the session stops, a session synced mid-watch will get its Toggl entry **updated in place** on the next run once more of it has been watched (or once it's finished). A rewatch of the same item later gets its own new session/entry — it doesn't overwrite the earlier one.
+Because a Playback Reporting row is written at playback **start** and its duration keeps growing until the session stops, a session synced mid-watch will get its Toggl entry **updated in place** on the next run once more of it has been watched (or once it's finished). A rewatch of the same item later gets its own new session/entry; it doesn't overwrite the earlier one.
 
 Rate limits are handled gracefully: if Toggl returns 402, deduplication is skipped and sync continues.
 
@@ -100,7 +100,7 @@ TOGGL_TAGS=watching,entertainment
 SYNC_STATE_FILE=.sync_state.json
 ```
 
-> **Timezone note:** the Playback Reporting plugin records session start times in the Jellyfin *server's local time*, not UTC. This tool treats those timestamps as-is when creating Toggl entries. If your Jellyfin server and Toggl account expect different timezones, entry times may look shifted — this is a Playback Reporting plugin limitation, not something this tool can correct without knowing the server's TZ.
+> **Timezone note:** the Playback Reporting plugin records session start times in the Jellyfin *server's local time*, not UTC. This tool treats those timestamps as-is when creating Toggl entries. If your Jellyfin server and Toggl account expect different timezones, entry times may look shifted; this is a Playback Reporting plugin limitation, not something this tool can correct without knowing the server's TZ.
 
 ### Docker
 
