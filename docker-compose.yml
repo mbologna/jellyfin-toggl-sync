@@ -1,0 +1,17 @@
+services:
+  jellyfin-toggl-sync:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    volumes:
+      # Persist sync state between runs
+      - ./data:/app/data
+    environment:
+      # Override state file location to use mounted volume
+      - SYNC_STATE_FILE=/app/data/.sync_state.json
+      # Force unbuffered output so we see logs immediately
+      - PYTHONUNBUFFERED=1
+    # Run once and exit
+    restart: "no"

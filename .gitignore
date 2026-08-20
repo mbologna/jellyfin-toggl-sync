@@ -1,0 +1,74 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+eggs/
+.eggs/
+*.egg-info/
+dist/
+build/
+*.egg
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.nox/
+.ruff_cache/
+.tox/
+pip-wheel-metadata/
+share/python-wheels/
+wheels/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# uv
+.uv/
+
+# Environment variables and secrets
+.env
+.env.local
+.env.*.local
+
+# Sync state
+.sync_state.json
+
+# Data directory (Docker volume)
+data/
+app/data/
+
+# Kubernetes secrets
+k8s/secrets/*.yaml
+!k8s/secrets/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+.cache/
+
+# Testing
+coverage.xml
+*.cover
+
+# Claude Code
+CLAUDE.md

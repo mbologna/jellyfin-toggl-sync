@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jellyfin-toggl-config
+  namespace: jellyfin-toggl
+data:
+  JELLYFIN_HISTORY_HOURS: "24"
+  JELLYFIN_MIN_DURATION_MINUTES: "10"
+  TOGGL_TAGS: "watching,entertainment"
+  # Update these values for your setup
+  JELLYFIN_URL: "https://jellyfin.example.com"
+  JELLYFIN_USER_ID: ""
+  TOGGL_WORKSPACE_ID: "YOUR_WORKSPACE_ID"
+  TOGGL_PROJECT_ID: "YOUR_PROJECT_ID"

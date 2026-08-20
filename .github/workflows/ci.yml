@@ -1,0 +1,68 @@
+name: CI
+
+"on":
+  push:
+    branches: ["**"]
+    tags: ["v*.*.*"]
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+  attestations: write
+  security-events: write
+
+jobs:
+  python:
+    uses: mbologna/.github/.github/workflows/python-ci.yml@38c3e48cf89560ea2cf773d5fe70b01b37afb2a3 # main
+    with:
+      python_version: "3.14"
+      use_uv: true
+      enable_codecov: true
+    secrets: inherit
+
+  docker:
+    needs: python
+    uses: mbologna/.github/.github/workflows/docker-ci.yml@38c3e48cf89560ea2cf773d5fe70b01b37afb2a3 # main
+    with:
+      image_name: jellyfin-toggl-sync
+      push_to_dockerhub: true
+      enable_cosign: true
+      enable_release_drafter: true
+    secrets: inherit
+
+  auto-release:
+    if: github.event_name == 'schedule'
+    needs: [docker]
+    uses: mbologna/.github/.github/workflows/auto-release.yml@38c3e48cf89560ea2cf773d5fe70b01b37afb2a3 # main
+    with:
+      strategy: docker
+      image: docker.io/mbologna/jellyfin-toggl-sync
+    secrets: inherit
+
+  deploy:
+    needs: [docker]
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'schedule'
+    uses: mbologna/.github/.github/workflows/gcp-deploy.yml@38c3e48cf89560ea2cf773d5fe70b01b37afb2a3 # main
+    with:
+      image_name: jellyfin-toggl-sync
+      deploy_type: service
+      deploy_name: jellyfin-toggl-sync
+      region: us-central1
+    secrets: inherit
+
+  cache-cleanup:
+    if: github.event_name == 'schedule'
+    uses: mbologna/.github/.github/workflows/cache-cleanup.yml@38c3e48cf89560ea2cf773d5fe70b01b37afb2a3 # main
+    with:
+      max_age_days: 7
+    permissions:
+      actions: write

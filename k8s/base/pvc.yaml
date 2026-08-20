@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: jellyfin-toggl-state-pvc
+  namespace: jellyfin-toggl
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 3Mi
+  # Adjust storageClassName based on your cluster
+  # Comment out or remove if using default storage class
+  # storageClassName: standard

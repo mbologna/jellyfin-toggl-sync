@@ -1,0 +1,97 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: jellyfin-toggl-sync
+  namespace: jellyfin-toggl
+spec:
+  # Run every hour — Jellyfin polling has no OAuth-refresh cost to worry about
+  schedule: "0 * * * *"
+  # Keep last 3 successful and 1 failed job for debugging
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  # Don't allow concurrent runs
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      # Clean up completed jobs after 1 hour
+      ttlSecondsAfterFinished: 3600
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app: jellyfin-toggl-sync
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            fsGroup: 1000
+          containers:
+          - name: sync
+            image: docker.io/mbologna/jellyfin-toggl-sync:latest
+            imagePullPolicy: Always
+            env:
+            # From ConfigMap
+            - name: JELLYFIN_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: jellyfin-toggl-config
+                  key: JELLYFIN_URL
+            - name: JELLYFIN_USER_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: jellyfin-toggl-config
+                  key: JELLYFIN_USER_ID
+            - name: JELLYFIN_HISTORY_HOURS
+              valueFrom:
+                configMapKeyRef:
+                  name: jellyfin-toggl-config
+                  key: JELLYFIN_HISTORY_HOURS
+            - name: JELLYFIN_MIN_DURATION_MINUTES
+              valueFrom:
+                configMapKeyRef:
+                  name: jellyfin-toggl-config
+                  key: JELLYFIN_MIN_DURATION_MINUTES
+            - name: TOGGL_WORKSPACE_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: jellyfin-toggl-config
+                  key: TOGGL_WORKSPACE_ID
+            - name: TOGGL_PROJECT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: jellyfin-toggl-config
+                  key: TOGGL_PROJECT_ID
+            - name: TOGGL_TAGS
+              valueFrom:
+                configMapKeyRef:
+                  name: jellyfin-toggl-config
+                  key: TOGGL_TAGS
+            # From Secret
+            - name: JELLYFIN_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: jellyfin-toggl-credentials
+                  key: JELLYFIN_API_KEY
+            - name: TOGGL_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: jellyfin-toggl-credentials
+                  key: TOGGL_API_TOKEN
+            # State file location
+            - name: SYNC_STATE_FILE
+              value: "/app/data/.sync_state.json"
+            volumeMounts:
+            - name: state-storage
+              mountPath: /app/data
+            resources:
+              requests:
+                memory: "128Mi"
+                cpu: "100m"
+              limits:
+                memory: "256Mi"
+                cpu: "500m"
+          volumes:
+          - name: state-storage
+            persistentVolumeClaim:
+              claimName: jellyfin-toggl-state-pvc
