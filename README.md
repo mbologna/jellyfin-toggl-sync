@@ -14,6 +14,12 @@ By syncing my Jellyfin viewing history to Toggl, I now have:
 
 This is a sibling project to [trakt-toggl-sync](https://github.com/mbologna/trakt-toggl-sync), doing the same thing but reading watch history from a self-hosted Jellyfin server instead of Trakt.
 
+### Why not just use trakt-toggl-sync?
+
+In August 2026, developers started reporting that their existing Trakt API applications had disappeared without notice, and that creating a new one now requires a paid Trakt VIP subscription ([Reddit thread](https://www.reddit.com/r/trakt/comments/1vb2gyc/api_deleted_vip_required_to_be_a_developer_now/), [Trakt forum report](https://forums.trakt.tv/t/unable-to-create-a-new-api-application-after-purchasing-trakt-vip-the-create-button-does-nothing/119966)). Trakt hasn't published an official policy statement about this, so it's unclear whether it's permanent, but it means anyone without VIP may no longer be able to set up `trakt-toggl-sync` from scratch.
+
+`jellyfin-toggl-sync` sidesteps the problem entirely: it only needs a self-hosted Jellyfin server and the free Playback Reporting plugin, no Trakt account, API application, or subscription required.
+
 ## Features
 
 - ✅ Uses **actual watched time** (pauses excluded), not the media's full runtime
