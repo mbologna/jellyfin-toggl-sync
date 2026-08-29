@@ -22,7 +22,7 @@ permissions:
 
 jobs:
   python:
-    uses: mbologna/.github/.github/workflows/python-ci.yml@38c3e48cf89560ea2cf773d5fe70b01b37afb2a3 # main
+    uses: mbologna/.github/.github/workflows/python-ci.yml@64ba96e6b7e5d32b120c30baf0db6713e0f87cda # main
     with:
       python_version: "3.14"
       use_uv: true
@@ -31,7 +31,7 @@ jobs:
 
   docker:
     needs: python
-    uses: mbologna/.github/.github/workflows/docker-ci.yml@38c3e48cf89560ea2cf773d5fe70b01b37afb2a3 # main
+    uses: mbologna/.github/.github/workflows/docker-ci.yml@64ba96e6b7e5d32b120c30baf0db6713e0f87cda # main
     with:
       image_name: jellyfin-toggl-sync
       push_to_dockerhub: true
@@ -42,7 +42,7 @@ jobs:
   auto-release:
     if: github.event_name == 'schedule'
     needs: [docker]
-    uses: mbologna/.github/.github/workflows/auto-release.yml@38c3e48cf89560ea2cf773d5fe70b01b37afb2a3 # main
+    uses: mbologna/.github/.github/workflows/auto-release.yml@64ba96e6b7e5d32b120c30baf0db6713e0f87cda # main
     with:
       strategy: docker
       image: docker.io/mbologna/jellyfin-toggl-sync
@@ -51,7 +51,7 @@ jobs:
   deploy:
     needs: [docker]
     if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'schedule'
-    uses: mbologna/.github/.github/workflows/gcp-deploy.yml@38c3e48cf89560ea2cf773d5fe70b01b37afb2a3 # main
+    uses: mbologna/.github/.github/workflows/gcp-deploy.yml@64ba96e6b7e5d32b120c30baf0db6713e0f87cda # main
     with:
       image_name: jellyfin-toggl-sync
       deploy_type: service
@@ -61,7 +61,7 @@ jobs:
 
   cache-cleanup:
     if: github.event_name == 'schedule'
-    uses: mbologna/.github/.github/workflows/cache-cleanup.yml@38c3e48cf89560ea2cf773d5fe70b01b37afb2a3 # main
+    uses: mbologna/.github/.github/workflows/cache-cleanup.yml@64ba96e6b7e5d32b120c30baf0db6713e0f87cda # main
     with:
       max_age_days: 7
     permissions:
