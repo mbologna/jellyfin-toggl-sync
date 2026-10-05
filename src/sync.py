@@ -95,8 +95,11 @@ def main():
     sys.stdout.flush()
     rows = jellyfin.fetch_history(since_dt, JELLYFIN_MIN_DURATION_MINUTES * 60)
 
-    # Pre-fetch Toggl entries for the same date range to improve duplicate detection
-    toggl.get_cached_entries(start_date=since_dt.strftime("%Y-%m-%d"), force_refresh=True)
+    # Pre-fetch Toggl entries for the same date range to improve duplicate detection.
+    # Toggl's API rejects start_date values older than ~90 days, so clamp to that
+    # regardless of JELLYFIN_HISTORY_HOURS — Toggl itself can't look back further anyway.
+    toggl_since_dt = max(since_dt, datetime.now() - timedelta(days=89))
+    toggl.get_cached_entries(start_date=toggl_since_dt.strftime("%Y-%m-%d"), force_refresh=True)
 
     sync_state = load_json_file(SYNC_STATE_FILE) or {}
 

@@ -15,6 +15,8 @@ class TogglAPI:
     BASE_URL = "https://api.track.toggl.com/api/v9"
     DEFAULT_TIMEOUT = (3.05, 10)
     CREATED_WITH = "jellyfin-toggl-sync"
+    RATE_LIMIT_MAX_RETRIES = 5
+    RATE_LIMIT_RETRY_DELAY_SECONDS = 30
 
     def __init__(self, api_token, workspace_id, project_id, tags):
         self.api_token = api_token
@@ -129,27 +131,37 @@ class TogglAPI:
             "wid": self.workspace_id,
         }
 
-        try:
-            response = requests.post(
-                f"{self.BASE_URL}/workspaces/{self.workspace_id}/time_entries",
-                json=data,
-                auth=(self.api_token, "api_token"),
-                timeout=self.DEFAULT_TIMEOUT,
-            )
-            response.raise_for_status()
-            entry = response.json()
-            start_dt = self.parse_time(start_time).strftime("%Y-%m-%d %H:%M")
-            print(f"[{timestamp()}] ✓ Created: {description} (at {start_dt})")
-            self._cached_entries = None
-            return entry.get("id")
-        except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 402:
-                print(f"[{timestamp()}] ⚠ Rate limit reached. Stopping sync.")
-                self._rate_limited = True
-                raise
-            else:
-                print(f"[{timestamp()}] ✗ Failed to create: {description} - {e.response.text}", file=sys.stderr)
-                return None
+        for attempt in range(self.RATE_LIMIT_MAX_RETRIES + 1):
+            try:
+                response = requests.post(
+                    f"{self.BASE_URL}/workspaces/{self.workspace_id}/time_entries",
+                    json=data,
+                    auth=(self.api_token, "api_token"),
+                    timeout=self.DEFAULT_TIMEOUT,
+                )
+                response.raise_for_status()
+                entry = response.json()
+                start_dt = self.parse_time(start_time).strftime("%Y-%m-%d %H:%M")
+                print(f"[{timestamp()}] ✓ Created: {description} (at {start_dt})")
+                self._cached_entries = None
+                return entry.get("id")
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code == 402:
+                    if attempt < self.RATE_LIMIT_MAX_RETRIES:
+                        print(
+                            f"[{timestamp()}] ⚠ Rate limit reached. "
+                            f"Retrying in {self.RATE_LIMIT_RETRY_DELAY_SECONDS}s "
+                            f"({attempt + 1}/{self.RATE_LIMIT_MAX_RETRIES})..."
+                        )
+                        time.sleep(self.RATE_LIMIT_RETRY_DELAY_SECONDS)
+                        continue
+                    print(f"[{timestamp()}] ⚠ Rate limit reached. Stopping sync.")
+                    self._rate_limited = True
+                    raise
+                else:
+                    print(f"[{timestamp()}] ✗ Failed to create: {description} - {e.response.text}", file=sys.stderr)
+                    return None
+        return None
 
     def update_entry(self, entry_id, description, start_time, end_time):
         """Update an existing Toggl time entry. Returns the entry ID, or None if not found."""
@@ -162,28 +174,38 @@ class TogglAPI:
             "tags": self.tags,
             "wid": self.workspace_id,
         }
-        try:
-            response = requests.put(
-                f"{self.BASE_URL}/workspaces/{self.workspace_id}/time_entries/{entry_id}",
-                json=data,
-                auth=(self.api_token, "api_token"),
-                timeout=self.DEFAULT_TIMEOUT,
-            )
-            response.raise_for_status()
-            start_dt = self.parse_time(start_time).strftime("%Y-%m-%d %H:%M")
-            print(f"[{timestamp()}] ↻ Updated: {description} (at {start_dt})")
-            self._cached_entries = None
-            return response.json().get("id")
-        except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 404:
-                return None  # Entry was deleted from Toggl
-            elif e.response.status_code == 402:
-                print(f"[{timestamp()}] ⚠ Rate limit reached. Stopping sync.")
-                self._rate_limited = True
-                raise
-            else:
-                print(f"[{timestamp()}] ✗ Failed to update: {description} - {e.response.text}", file=sys.stderr)
-                return None
+        for attempt in range(self.RATE_LIMIT_MAX_RETRIES + 1):
+            try:
+                response = requests.put(
+                    f"{self.BASE_URL}/workspaces/{self.workspace_id}/time_entries/{entry_id}",
+                    json=data,
+                    auth=(self.api_token, "api_token"),
+                    timeout=self.DEFAULT_TIMEOUT,
+                )
+                response.raise_for_status()
+                start_dt = self.parse_time(start_time).strftime("%Y-%m-%d %H:%M")
+                print(f"[{timestamp()}] ↻ Updated: {description} (at {start_dt})")
+                self._cached_entries = None
+                return response.json().get("id")
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code == 404:
+                    return None  # Entry was deleted from Toggl
+                elif e.response.status_code == 402:
+                    if attempt < self.RATE_LIMIT_MAX_RETRIES:
+                        print(
+                            f"[{timestamp()}] ⚠ Rate limit reached. "
+                            f"Retrying in {self.RATE_LIMIT_RETRY_DELAY_SECONDS}s "
+                            f"({attempt + 1}/{self.RATE_LIMIT_MAX_RETRIES})..."
+                        )
+                        time.sleep(self.RATE_LIMIT_RETRY_DELAY_SECONDS)
+                        continue
+                    print(f"[{timestamp()}] ⚠ Rate limit reached. Stopping sync.")
+                    self._rate_limited = True
+                    raise
+                else:
+                    print(f"[{timestamp()}] ✗ Failed to update: {description} - {e.response.text}", file=sys.stderr)
+                    return None
+        return None
 
     def remove_duplicates(self):
         """Remove duplicate entries from Toggl, keeping most recent."""
@@ -287,11 +309,14 @@ class TogglAPI:
 
             # Second pass: same-watch entries — multiple Jellyfin playback sessions
             # (and thus multiple Toggl entries) for what is really one watch-through,
-            # e.g. a movie paused overnight and finished the next day, or a sync that
+            # e.g. a movie paused overnight and finished days later, multiple clients
+            # each reporting their own session for the same watch, or a sync that
             # recreated an entry Toggl already had. For this user, a genuine rewatch
             # of the same title doesn't happen inside of a year, so any repeat within
-            # a week is assumed to be the same watch-through and gets collapsed.
-            NEAR_DUPLICATE_START_GAP_SECONDS = 7 * 24 * 3600
+            # a rolling 30 days is assumed to be the same watch-through and gets
+            # collapsed; that's generous enough to absorb multi-client reporting
+            # quirks while staying a small fraction of the real rewatch cadence.
+            NEAR_DUPLICATE_START_GAP_SECONDS = 30 * 24 * 3600
             entries_by_desc: dict = {}
             for entry in filtered_entries:
                 desc = entry.get("description", "")
