@@ -423,6 +423,104 @@ class TestTogglUpdateEntry:
         assert api._rate_limited is True
 
 
+class TestTogglRemoveDuplicates:
+    """Test TogglAPI.remove_duplicates()'s near-duplicate (second) pass."""
+
+    def _make_api(self):
+        return TogglAPI("token", 123, 456, ["trakt"])
+
+    @staticmethod
+    def _iso(dt):
+        return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def _run(self, api, entries):
+        page = Mock()
+        page.json.return_value = entries
+        empty_page = Mock()
+        empty_page.json.return_value = []
+        with patch("requests.get", side_effect=[page, empty_page]) as mock_get:
+            with patch("requests.delete") as mock_delete:
+                api.remove_duplicates()
+        return mock_get, mock_delete
+
+    def test_keeps_sessions_split_across_days(self):
+        """A movie paused overnight and finished the next day must not be collapsed."""
+        api = self._make_api()
+        now = datetime.now()
+        entries = [
+            {
+                "id": 1,
+                "project_id": 456,
+                "description": "🎞️ Movie X (2025)",
+                "start": self._iso(now - timedelta(hours=20)),
+                "stop": self._iso(now - timedelta(hours=19)),
+            },
+            {
+                "id": 2,
+                "project_id": 456,
+                "description": "🎞️ Movie X (2025)",
+                "start": self._iso(now - timedelta(hours=1)),
+                "stop": self._iso(now),
+            },
+        ]
+
+        _, mock_delete = self._run(api, entries)
+
+        mock_delete.assert_not_called()
+
+    def test_collapses_near_instant_duplicate(self):
+        """Two entries re-recording the same session seconds apart are true duplicates."""
+        api = self._make_api()
+        now = datetime.now()
+        entries = [
+            {
+                "id": 1,
+                "project_id": 456,
+                "description": "🎞️ Movie X (2025)",
+                "start": self._iso(now - timedelta(minutes=2)),
+                "stop": self._iso(now - timedelta(minutes=1)),
+            },
+            {
+                "id": 2,
+                "project_id": 456,
+                "description": "🎞️ Movie X (2025)",
+                "start": self._iso(now - timedelta(minutes=1, seconds=30)),
+                "stop": self._iso(now),
+            },
+        ]
+
+        _, mock_delete = self._run(api, entries)
+
+        mock_delete.assert_called_once()
+        assert mock_delete.call_args.args[0].endswith("/time_entries/1")
+
+    def test_collapses_overlapping_entries_even_if_far_apart_in_start_time(self):
+        """Overlapping time ranges are always a true duplicate, regardless of start gap."""
+        api = self._make_api()
+        now = datetime.now()
+        entries = [
+            {
+                "id": 1,
+                "project_id": 456,
+                "description": "🎞️ Movie X (2025)",
+                "start": self._iso(now - timedelta(hours=3)),
+                "stop": self._iso(now - timedelta(hours=1)),
+            },
+            {
+                "id": 2,
+                "project_id": 456,
+                "description": "🎞️ Movie X (2025)",
+                "start": self._iso(now - timedelta(hours=2)),
+                "stop": self._iso(now),
+            },
+        ]
+
+        _, mock_delete = self._run(api, entries)
+
+        mock_delete.assert_called_once()
+        assert mock_delete.call_args.args[0].endswith("/time_entries/1")
+
+
 class TestBuildTitle:
     """Test sync.build_title() for movies and episodes."""
 

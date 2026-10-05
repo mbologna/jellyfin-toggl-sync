@@ -285,9 +285,14 @@ class TogglAPI:
             else:
                 print(f"[{timestamp()}] No exact Toggl duplicates found")
 
-            # Second pass: close-in-time duplicates (same description, starts within 24h)
-            # Handles re-watch entries created across separate sync runs
-            CLOSE_WINDOW_SECONDS = 24 * 3600
+            # Second pass: near-duplicate entries — the same playback session recorded
+            # twice (e.g. .sync_state.json was lost and the sync recreated an entry
+            # Toggl already had). A true duplicate either overlaps an existing entry's
+            # time range, or starts within seconds of it (re-created almost instantly).
+            # This must NOT catch two genuinely separate sessions of the same title —
+            # e.g. a movie paused overnight and finished the next day, which share a
+            # description but never overlap and start hours or days apart.
+            NEAR_DUPLICATE_START_GAP_SECONDS = 120
             entries_by_desc: dict = {}
             for entry in filtered_entries:
                 desc = entry.get("description", "")
@@ -304,12 +309,17 @@ class TogglAPI:
                     cluster = [desc_entries[i]]
                     j = i + 1
                     while j < len(desc_entries):
-                        gap = (
-                            self.normalize_timestamp(desc_entries[j]["start"])
-                            - self.normalize_timestamp(desc_entries[j - 1]["start"])
-                        ).total_seconds()
-                        if gap <= CLOSE_WINDOW_SECONDS:
-                            cluster.append(desc_entries[j])
+                        prev = desc_entries[j - 1]
+                        curr = desc_entries[j]
+                        prev_start = self.normalize_timestamp(prev["start"])
+                        curr_start = self.normalize_timestamp(curr["start"])
+                        start_gap = (curr_start - prev_start).total_seconds()
+
+                        prev_stop = self.normalize_timestamp(prev["stop"]) if prev.get("stop") else None
+                        overlaps = prev_stop is not None and curr_start < prev_stop
+
+                        if overlaps or start_gap <= NEAR_DUPLICATE_START_GAP_SECONDS:
+                            cluster.append(curr)
                             j += 1
                         else:
                             break
