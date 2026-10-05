@@ -48,17 +48,6 @@ jobs:
       image: docker.io/mbologna/jellyfin-toggl-sync
     secrets: inherit
 
-  deploy:
-    needs: [docker]
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'schedule'
-    uses: mbologna/.github/.github/workflows/gcp-deploy.yml@d6c0708a949c4eab6cfcd989a83a8e3042b60b89 # main
-    with:
-      image_name: jellyfin-toggl-sync
-      deploy_type: service
-      deploy_name: jellyfin-toggl-sync
-      region: us-central1
-    secrets: inherit
-
   cache-cleanup:
     if: github.event_name == 'schedule'
     uses: mbologna/.github/.github/workflows/cache-cleanup.yml@d6c0708a949c4eab6cfcd989a83a8e3042b60b89 # main
