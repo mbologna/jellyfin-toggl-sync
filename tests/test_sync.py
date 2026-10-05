@@ -370,6 +370,7 @@ class TestTogglCreateEntry:
         api = self._make_api()
         error_response = Mock()
         error_response.status_code = 402
+        error_response.headers = {}
         http_error = requests.exceptions.HTTPError(response=error_response)
 
         with patch("requests.post") as mock_post:
@@ -387,6 +388,7 @@ class TestTogglCreateEntry:
         api = self._make_api()
         error_response = Mock()
         error_response.status_code = 402
+        error_response.headers = {}
         http_error = requests.exceptions.HTTPError(response=error_response)
 
         rate_limited_response = Mock()
@@ -401,6 +403,26 @@ class TestTogglCreateEntry:
         assert entry_id == 999
         assert api._rate_limited is False
         mock_sleep.assert_called_once_with(api.RATE_LIMIT_RETRY_DELAY_SECONDS)
+
+    def test_create_entry_402_honors_toggl_quota_reset_header(self):
+        """When Toggl sends X-Toggl-Quota-Resets-In, wait that long instead of the fixed delay."""
+        api = self._make_api()
+        error_response = Mock()
+        error_response.status_code = 402
+        error_response.headers = {"x-toggl-quota-resets-in": "120"}
+        http_error = requests.exceptions.HTTPError(response=error_response)
+
+        rate_limited_response = Mock()
+        rate_limited_response.raise_for_status.side_effect = http_error
+        success_response = Mock()
+        success_response.json.return_value = {"id": 999}
+
+        with patch("requests.post", side_effect=[rate_limited_response, success_response]):
+            with patch("time.sleep") as mock_sleep:
+                entry_id = api.create_entry("Test Movie", "2025-01-01T10:00:00Z", "2025-01-01T12:00:00Z")
+
+        assert entry_id == 999
+        mock_sleep.assert_called_once_with(120 + api.RATE_LIMIT_RETRY_BUFFER_SECONDS)
 
 
 class TestTogglUpdateEntry:
@@ -438,6 +460,7 @@ class TestTogglUpdateEntry:
         api = self._make_api()
         error_response = Mock()
         error_response.status_code = 402
+        error_response.headers = {}
         http_error = requests.exceptions.HTTPError(response=error_response)
 
         with patch("requests.put") as mock_put:

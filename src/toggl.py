@@ -15,8 +15,9 @@ class TogglAPI:
     BASE_URL = "https://api.track.toggl.com/api/v9"
     DEFAULT_TIMEOUT = (3.05, 10)
     CREATED_WITH = "jellyfin-toggl-sync"
-    RATE_LIMIT_MAX_RETRIES = 5
-    RATE_LIMIT_RETRY_DELAY_SECONDS = 30
+    RATE_LIMIT_MAX_RETRIES = 3
+    RATE_LIMIT_RETRY_DELAY_SECONDS = 30  # fallback when Toggl doesn't send a reset hint
+    RATE_LIMIT_RETRY_BUFFER_SECONDS = 2
 
     def __init__(self, api_token, workspace_id, project_id, tags):
         self.api_token = api_token
@@ -27,6 +28,23 @@ class TogglAPI:
         self._cache_timestamp = None
         self._cache_duration = 300  # Cache for 5 minutes
         self._rate_limited = False
+
+    @classmethod
+    def _rate_limit_wait_seconds(cls, response):
+        """Seconds to wait before retrying a 402, honoring Toggl's quota-reset hint.
+
+        Toggl's free plan enforces an hourly quota, not a short burst limit — a
+        402 response carries an X-Toggl-Quota-Resets-In header (seconds) telling
+        us exactly when it clears, which can be up to ~3600s. Fall back to the
+        fixed delay if the header is missing or unparseable.
+        """
+        reset_in = response.headers.get("x-toggl-quota-resets-in") if response is not None else None
+        if reset_in is not None:
+            try:
+                return int(reset_in) + cls.RATE_LIMIT_RETRY_BUFFER_SECONDS
+            except ValueError:
+                pass
+        return cls.RATE_LIMIT_RETRY_DELAY_SECONDS
 
     @staticmethod
     def parse_time(time_str):
@@ -148,12 +166,12 @@ class TogglAPI:
             except requests.exceptions.HTTPError as e:
                 if e.response.status_code == 402:
                     if attempt < self.RATE_LIMIT_MAX_RETRIES:
+                        delay = self._rate_limit_wait_seconds(e.response)
                         print(
                             f"[{timestamp()}] ⚠ Rate limit reached. "
-                            f"Retrying in {self.RATE_LIMIT_RETRY_DELAY_SECONDS}s "
-                            f"({attempt + 1}/{self.RATE_LIMIT_MAX_RETRIES})..."
+                            f"Retrying in {delay}s ({attempt + 1}/{self.RATE_LIMIT_MAX_RETRIES})..."
                         )
-                        time.sleep(self.RATE_LIMIT_RETRY_DELAY_SECONDS)
+                        time.sleep(delay)
                         continue
                     print(f"[{timestamp()}] ⚠ Rate limit reached. Stopping sync.")
                     self._rate_limited = True
@@ -192,12 +210,12 @@ class TogglAPI:
                     return None  # Entry was deleted from Toggl
                 elif e.response.status_code == 402:
                     if attempt < self.RATE_LIMIT_MAX_RETRIES:
+                        delay = self._rate_limit_wait_seconds(e.response)
                         print(
                             f"[{timestamp()}] ⚠ Rate limit reached. "
-                            f"Retrying in {self.RATE_LIMIT_RETRY_DELAY_SECONDS}s "
-                            f"({attempt + 1}/{self.RATE_LIMIT_MAX_RETRIES})..."
+                            f"Retrying in {delay}s ({attempt + 1}/{self.RATE_LIMIT_MAX_RETRIES})..."
                         )
-                        time.sleep(self.RATE_LIMIT_RETRY_DELAY_SECONDS)
+                        time.sleep(delay)
                         continue
                     print(f"[{timestamp()}] ⚠ Rate limit reached. Stopping sync.")
                     self._rate_limited = True
