@@ -443,8 +443,8 @@ class TestTogglRemoveDuplicates:
                 api.remove_duplicates()
         return mock_get, mock_delete
 
-    def test_keeps_sessions_split_across_days(self):
-        """A movie paused overnight and finished the next day must not be collapsed."""
+    def test_collapses_sessions_split_across_days(self):
+        """A movie paused overnight and finished the next day is the same watch-through."""
         api = self._make_api()
         now = datetime.now()
         entries = [
@@ -460,6 +460,32 @@ class TestTogglRemoveDuplicates:
                 "project_id": 456,
                 "description": "🎞️ Movie X (2025)",
                 "start": self._iso(now - timedelta(hours=1)),
+                "stop": self._iso(now),
+            },
+        ]
+
+        _, mock_delete = self._run(api, entries)
+
+        mock_delete.assert_called_once()
+        assert mock_delete.call_args.args[0].endswith("/time_entries/1")
+
+    def test_keeps_entries_more_than_a_week_apart(self):
+        """A repeat of the same title more than a week later is treated as a real rewatch."""
+        api = self._make_api()
+        now = datetime.now()
+        entries = [
+            {
+                "id": 1,
+                "project_id": 456,
+                "description": "🎞️ Movie X (2025)",
+                "start": self._iso(now - timedelta(days=10)),
+                "stop": self._iso(now - timedelta(days=10) + timedelta(hours=2)),
+            },
+            {
+                "id": 2,
+                "project_id": 456,
+                "description": "🎞️ Movie X (2025)",
+                "start": self._iso(now - timedelta(hours=2)),
                 "stop": self._iso(now),
             },
         ]
@@ -494,8 +520,8 @@ class TestTogglRemoveDuplicates:
         mock_delete.assert_called_once()
         assert mock_delete.call_args.args[0].endswith("/time_entries/1")
 
-    def test_collapses_overlapping_entries_even_if_far_apart_in_start_time(self):
-        """Overlapping time ranges are always a true duplicate, regardless of start gap."""
+    def test_collapses_overlapping_entries_even_beyond_the_week_window(self):
+        """Overlapping time ranges are always a true duplicate, even past the 7-day start-gap window."""
         api = self._make_api()
         now = datetime.now()
         entries = [
@@ -503,14 +529,14 @@ class TestTogglRemoveDuplicates:
                 "id": 1,
                 "project_id": 456,
                 "description": "🎞️ Movie X (2025)",
-                "start": self._iso(now - timedelta(hours=3)),
-                "stop": self._iso(now - timedelta(hours=1)),
+                "start": self._iso(now - timedelta(days=20)),
+                "stop": self._iso(now - timedelta(days=5)),
             },
             {
                 "id": 2,
                 "project_id": 456,
                 "description": "🎞️ Movie X (2025)",
-                "start": self._iso(now - timedelta(hours=2)),
+                "start": self._iso(now - timedelta(days=10)),
                 "stop": self._iso(now),
             },
         ]
