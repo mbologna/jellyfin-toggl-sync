@@ -285,14 +285,13 @@ class TogglAPI:
             else:
                 print(f"[{timestamp()}] No exact Toggl duplicates found")
 
-            # Second pass: near-duplicate entries — the same playback session recorded
-            # twice (e.g. .sync_state.json was lost and the sync recreated an entry
-            # Toggl already had). A true duplicate either overlaps an existing entry's
-            # time range, or starts within seconds of it (re-created almost instantly).
-            # This must NOT catch two genuinely separate sessions of the same title —
-            # e.g. a movie paused overnight and finished the next day, which share a
-            # description but never overlap and start hours or days apart.
-            NEAR_DUPLICATE_START_GAP_SECONDS = 120
+            # Second pass: same-watch entries — multiple Jellyfin playback sessions
+            # (and thus multiple Toggl entries) for what is really one watch-through,
+            # e.g. a movie paused overnight and finished the next day, or a sync that
+            # recreated an entry Toggl already had. For this user, a genuine rewatch
+            # of the same title doesn't happen inside of a year, so any repeat within
+            # a week is assumed to be the same watch-through and gets collapsed.
+            NEAR_DUPLICATE_START_GAP_SECONDS = 7 * 24 * 3600
             entries_by_desc: dict = {}
             for entry in filtered_entries:
                 desc = entry.get("description", "")
