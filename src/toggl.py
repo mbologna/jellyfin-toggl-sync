@@ -13,6 +13,7 @@ class TogglAPI:
     """Toggl API client for time tracking."""
 
     BASE_URL = "https://api.track.toggl.com/api/v9"
+    REPORTS_BASE_URL = "https://api.track.toggl.com/reports/api/v3"
     DEFAULT_TIMEOUT = (3.05, 10)
     CREATED_WITH = "jellyfin-toggl-sync"
     RATE_LIMIT_MAX_RETRIES = 3
@@ -28,6 +29,7 @@ class TogglAPI:
         self._cache_timestamp = None
         self._cache_duration = 300  # Cache for 5 minutes
         self._rate_limited = False
+        self._tag_id_to_name = None
 
     @classmethod
     def _rate_limit_wait_seconds(cls, response):
@@ -45,6 +47,94 @@ class TogglAPI:
             except ValueError:
                 pass
         return cls.RATE_LIMIT_RETRY_DELAY_SECONDS
+
+    def _tag_names(self):
+        """Lazily fetch and cache the workspace's tag id -> name mapping.
+
+        The Reports API only returns tag_ids, not names, so this is needed
+        to translate its rows into the same {"tags": [names...]} shape the
+        core API gives us (which find_existing_entry compares against).
+        """
+        if self._tag_id_to_name is None:
+            response = requests.get(
+                f"{self.BASE_URL}/workspaces/{self.workspace_id}/tags",
+                auth=(self.api_token, "api_token"),
+                timeout=self.DEFAULT_TIMEOUT,
+            )
+            response.raise_for_status()
+            self._tag_id_to_name = {t["id"]: t["name"] for t in response.json()}
+        return self._tag_id_to_name
+
+    def _fetch_reports_page(self, start_date, end_date, cursor=None):
+        """One page of the Reports API's detailed search, flattened to the
+        core API's entry shape. Returns (entries, next_cursor_or_None).
+
+        Unlike /me/time_entries (capped at ~90 days on start_date/since/before,
+        all confirmed directly against the live API), this endpoint has no
+        such floor — only a 366-day span per request, enforced by the caller.
+        """
+        body = {"start_date": start_date, "end_date": end_date, "page_size": 1000}
+        if cursor:
+            body.update(cursor)
+
+        for attempt in range(self.RATE_LIMIT_MAX_RETRIES + 1):
+            try:
+                response = requests.post(
+                    f"{self.REPORTS_BASE_URL}/workspace/{self.workspace_id}/search/time_entries",
+                    json=body,
+                    auth=(self.api_token, "api_token"),
+                    timeout=self.DEFAULT_TIMEOUT,
+                )
+                response.raise_for_status()
+                rows = response.json()
+                tag_names = self._tag_names()
+                entries = []
+                for row in rows:
+                    tags = [tag_names.get(tid, "") for tid in row.get("tag_ids") or []]
+                    for te in row.get("time_entries", []):
+                        entries.append(
+                            {
+                                "id": te["id"],
+                                "project_id": row.get("project_id"),
+                                "start": te["start"],
+                                "stop": te.get("stop"),
+                                "description": row.get("description", ""),
+                                "tags": tags,
+                                "wid": self.workspace_id,
+                            }
+                        )
+
+                next_id = response.headers.get("x-next-id")
+                next_cursor = None
+                if next_id is not None:
+                    next_cursor = {
+                        "first_id": int(next_id),
+                        "first_row_number": int(response.headers["x-next-row-number"]),
+                        "first_timestamp": int(response.headers["x-next-timestamp"]),
+                    }
+                return entries, next_cursor
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code == 402 and attempt < self.RATE_LIMIT_MAX_RETRIES:
+                    delay = self._rate_limit_wait_seconds(e.response)
+                    print(
+                        f"[{timestamp()}] ⚠ Rate limit reached. "
+                        f"Retrying in {delay}s ({attempt + 1}/{self.RATE_LIMIT_MAX_RETRIES})..."
+                    )
+                    time.sleep(delay)
+                    continue
+                raise
+        raise AssertionError("unreachable")  # loop always returns or raises
+
+    def _fetch_reports_entries(self, start_date, end_date):
+        """Fetch every entry in [start_date, end_date] (<=366 days) via the Reports API."""
+        all_entries = []
+        cursor = None
+        while True:
+            entries, cursor = self._fetch_reports_page(start_date, end_date, cursor)
+            all_entries.extend(entries)
+            if cursor is None:
+                break
+        return all_entries
 
     @staticmethod
     def parse_time(time_str):
@@ -68,20 +158,17 @@ class TogglAPI:
             or now - self._cache_timestamp > self._cache_duration
         ):
             try:
-                # Fetch entries with date range if provided
-                params = {}
                 if start_date:
-                    params["start_date"] = start_date
-                    params["end_date"] = datetime.now().strftime("%Y-%m-%d")
-
-                response = requests.get(
-                    f"{self.BASE_URL}/me/time_entries",
-                    params=params,
-                    auth=(self.api_token, "api_token"),
-                    timeout=self.DEFAULT_TIMEOUT,
-                )
-                response.raise_for_status()
-                self._cached_entries = response.json()
+                    end_date = datetime.now().strftime("%Y-%m-%d")
+                    self._cached_entries = self._fetch_reports_entries(start_date, end_date)
+                else:
+                    response = requests.get(
+                        f"{self.BASE_URL}/me/time_entries",
+                        auth=(self.api_token, "api_token"),
+                        timeout=self.DEFAULT_TIMEOUT,
+                    )
+                    response.raise_for_status()
+                    self._cached_entries = response.json()
                 self._cache_timestamp = now
                 self._rate_limited = False
             except requests.exceptions.HTTPError as e:
@@ -230,51 +317,14 @@ class TogglAPI:
         print(f"[{timestamp()}] Starting Toggl deduplication...")
 
         try:
-            # Fetch all entries for the project from the last year
+            # Fetch the last year via the Reports API (one request, <=366 day span,
+            # no lower-bound floor) instead of /me/time_entries' "before" cursor,
+            # which hits the same ~90-day floor as start_date/since and would
+            # eventually crash here once the account has >90 days of entries.
             today = datetime.now()
             one_year_ago = today - timedelta(days=365)
-            all_entries = []
-            current_before = datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-
-            while True:
-                params = {"before": current_before}
-                try:
-                    response = requests.get(
-                        f"{self.BASE_URL}/me/time_entries",
-                        params=params,
-                        auth=(self.api_token, "api_token"),
-                        timeout=self.DEFAULT_TIMEOUT,
-                    )
-                    response.raise_for_status()
-                except requests.exceptions.HTTPError as e:
-                    if e.response.status_code == 402:
-                        print(f"[{timestamp()}] ⚠ Toggl rate limit reached (402). Skipping deduplication.")
-                        print(f"[{timestamp()}] This is temporary - try again in a few minutes.")
-                        return
-                    raise
-
-                batch = response.json()
-
-                if not batch:
-                    break
-
-                project_entries = [e for e in batch if e.get("project_id") == self.project_id]
-                all_entries.extend(project_entries)
-
-                oldest_entry = min(batch, key=lambda x: x.get("start", ""))
-                oldest_time = self.parse_time(oldest_entry["start"]).replace(tzinfo=None)
-
-                if oldest_time < one_year_ago:
-                    break
-
-                current_before = (self.parse_time(oldest_entry["start"]) - timedelta(milliseconds=1)).strftime(
-                    "%Y-%m-%dT%H:%M:%S.%fZ"
-                )
-
-            # Filter to last year only
-            filtered_entries = [
-                e for e in all_entries if self.parse_time(e["start"]).replace(tzinfo=None) >= one_year_ago
-            ]
+            all_entries = self._fetch_reports_entries(one_year_ago.strftime("%Y-%m-%d"), today.strftime("%Y-%m-%d"))
+            filtered_entries = [e for e in all_entries if e.get("project_id") == self.project_id]
 
             print(f"[{timestamp()}] Found {len(filtered_entries)} Toggl entries in project")
 

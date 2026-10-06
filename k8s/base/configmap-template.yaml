@@ -6,7 +6,7 @@ metadata:
 data:
   JELLYFIN_HISTORY_HOURS: "24"
   JELLYFIN_MIN_DURATION_MINUTES: "10"
-  TOGGL_TAGS: "watching,entertainment"
+  TOGGL_TAGS: "watching,entertainment,jellyfin"
   # Update these values for your setup
   JELLYFIN_URL: "https://jellyfin.example.com"
   JELLYFIN_USER_ID: ""
