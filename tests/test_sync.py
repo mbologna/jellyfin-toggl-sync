@@ -623,6 +623,83 @@ class TestBuildTitle:
         assert build_title(row, item) == "🎞️ Unknown Film (N/A)"
 
 
+class TestSyncRows:
+    """Test sync.sync_rows()'s graceful stop on rate limits and network errors."""
+
+    def _make_toggl(self):
+        api = TogglAPI("token", 123, 456, ["jellyfin"])
+        api._cached_entries = []
+        api._cache_timestamp = time.time()
+        return api
+
+    def _make_jellyfin(self, item):
+        api = JellyfinAPI("https://jellyfin.example.com", "key")
+        api._item_cache = {}
+        api.get_item_details = Mock(return_value=item)
+        return api
+
+    def _row(self):
+        return {
+            "rowid": 1,
+            "DateCreated": datetime(2025, 1, 1, 10, 0, 0),
+            "UserId": "abc123",
+            "ItemId": "movie1",
+            "ItemType": "Movie",
+            "ItemName": "The Matrix",
+            "PlayDuration": 7200,
+        }
+
+    def test_processes_all_rows_on_success(self, tmp_path):
+        from sync import sync_rows
+
+        toggl = self._make_toggl()
+        jellyfin = self._make_jellyfin({"Name": "The Matrix", "ProductionYear": 1999})
+        state_file = str(tmp_path / "state.json")
+
+        with patch.object(toggl, "create_entry", return_value=111) as mock_create:
+            sync_rows([self._row()], jellyfin, toggl, {}, state_file)
+
+        mock_create.assert_called_once()
+
+    def test_stops_gracefully_on_402(self, tmp_path):
+        from sync import sync_rows
+
+        toggl = self._make_toggl()
+        jellyfin = self._make_jellyfin({"Name": "The Matrix", "ProductionYear": 1999})
+        state_file = str(tmp_path / "state.json")
+        error_response = Mock()
+        error_response.status_code = 402
+        http_error = requests.exceptions.HTTPError(response=error_response)
+
+        with patch.object(toggl, "create_entry", side_effect=http_error):
+            sync_rows([self._row()], jellyfin, toggl, {}, state_file)  # must not raise
+
+    def test_reraises_non_402_http_error(self, tmp_path):
+        from sync import sync_rows
+
+        toggl = self._make_toggl()
+        jellyfin = self._make_jellyfin({"Name": "The Matrix", "ProductionYear": 1999})
+        state_file = str(tmp_path / "state.json")
+        error_response = Mock()
+        error_response.status_code = 500
+        http_error = requests.exceptions.HTTPError(response=error_response)
+
+        with patch.object(toggl, "create_entry", side_effect=http_error):
+            with pytest.raises(requests.exceptions.HTTPError):
+                sync_rows([self._row()], jellyfin, toggl, {}, state_file)
+
+    def test_stops_gracefully_on_network_error(self, tmp_path):
+        """A transient network error (timeout, connection reset) must not crash the run."""
+        from sync import sync_rows
+
+        toggl = self._make_toggl()
+        jellyfin = self._make_jellyfin({"Name": "The Matrix", "ProductionYear": 1999})
+        state_file = str(tmp_path / "state.json")
+
+        with patch.object(toggl, "create_entry", side_effect=requests.exceptions.ReadTimeout("timed out")):
+            sync_rows([self._row()], jellyfin, toggl, {}, state_file)  # must not raise
+
+
 class TestSyncProcessPlaybackRow:
     """Test sync.process_playback_row() for movies and episodes."""
 
