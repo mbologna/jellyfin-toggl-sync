@@ -105,9 +105,17 @@ def main():
 
     print(f"[{timestamp()}] Processing {len(rows)} playback sessions...")
     sys.stdout.flush()
+    sync_rows(rows, jellyfin, toggl, sync_state, SYNC_STATE_FILE)
+
+    print(f"\n[{timestamp()}] ===== Sync Complete =====")
+    sys.stdout.flush()
+
+
+def sync_rows(rows, jellyfin, toggl, sync_state, state_file):
+    """Process each playback row, stopping gracefully on rate limits or network errors."""
     try:
         for row in rows:
-            process_playback_row(row, jellyfin, toggl, sync_state, SYNC_STATE_FILE)
+            process_playback_row(row, jellyfin, toggl, sync_state, state_file)
     except requests.exceptions.HTTPError as e:
         if e.response is not None and e.response.status_code == 402:
             print(f"[{timestamp()}] ⚠ Sync stopped due to rate limits.")
@@ -115,9 +123,10 @@ def main():
             sys.stdout.flush()
         else:
             raise
-
-    print(f"\n[{timestamp()}] ===== Sync Complete =====")
-    sys.stdout.flush()
+    except requests.exceptions.RequestException as e:
+        print(f"[{timestamp()}] ⚠ Sync stopped due to a network error: {e}")
+        print(f"[{timestamp()}] Run again later to sync remaining entries.")
+        sys.stdout.flush()
 
 
 if __name__ == "__main__":
