@@ -252,6 +252,164 @@ class TestTogglGetCachedEntries:
         assert result is None
         assert api._rate_limited is True
 
+    def test_start_date_uses_reports_api(self):
+        """A start_date arg routes through the Reports API, not /me/time_entries."""
+        api = self._make_api()
+        with patch.object(api, "_fetch_reports_entries", return_value=[{"id": 1}]) as mock_fetch:
+            with patch("requests.get") as mock_get:
+                result = api.get_cached_entries(start_date="2025-01-01")
+
+        assert result == [{"id": 1}]
+        mock_fetch.assert_called_once()
+        mock_get.assert_not_called()
+
+
+class TestTogglReportsAPI:
+    """Test TogglAPI._fetch_reports_page() / _fetch_reports_entries()."""
+
+    def _make_api(self):
+        return TogglAPI("token", 123, 456, ["jellyfin"])
+
+    def _tags_response(self, tags=None):
+        resp = Mock()
+        resp.json.return_value = tags or [{"id": 1, "name": "jellyfin"}, {"id": 2, "name": "watching"}]
+        return resp
+
+    def _reports_response(self, rows, next_headers=None):
+        resp = Mock()
+        resp.json.return_value = rows
+        resp.headers = next_headers or {}
+        return resp
+
+    def test_flattens_grouped_rows_and_resolves_tag_names(self):
+        api = self._make_api()
+        rows = [
+            {
+                "project_id": 456,
+                "description": "🎞️ Movie X (2025)",
+                "tag_ids": [1, 2],
+                "time_entries": [{"id": 999, "start": "2025-01-01T10:00:00Z", "stop": "2025-01-01T12:00:00Z"}],
+            }
+        ]
+
+        with patch("requests.get", return_value=self._tags_response()):
+            with patch("requests.post", return_value=self._reports_response(rows)):
+                entries = api._fetch_reports_entries("2025-01-01", "2025-01-02")
+
+        assert entries == [
+            {
+                "id": 999,
+                "project_id": 456,
+                "start": "2025-01-01T10:00:00Z",
+                "stop": "2025-01-01T12:00:00Z",
+                "description": "🎞️ Movie X (2025)",
+                "tags": ["jellyfin", "watching"],
+                "wid": 123,
+            }
+        ]
+
+    def test_paginates_using_next_headers(self):
+        api = self._make_api()
+        row1 = [
+            {
+                "project_id": 456,
+                "description": "A",
+                "tag_ids": [],
+                "time_entries": [{"id": 1, "start": "2025-01-01T10:00:00Z", "stop": "2025-01-01T11:00:00Z"}],
+            }
+        ]
+        row2 = [
+            {
+                "project_id": 456,
+                "description": "B",
+                "tag_ids": [],
+                "time_entries": [{"id": 2, "start": "2025-01-02T10:00:00Z", "stop": "2025-01-02T11:00:00Z"}],
+            }
+        ]
+        page1 = self._reports_response(
+            row1, {"x-next-id": "2", "x-next-row-number": "2", "x-next-timestamp": "1700000000"}
+        )
+        page2 = self._reports_response(row2)
+
+        with patch("requests.get", return_value=self._tags_response()):
+            with patch("requests.post", side_effect=[page1, page2]) as mock_post:
+                entries = api._fetch_reports_entries("2025-01-01", "2025-01-03")
+
+        assert [e["id"] for e in entries] == [1, 2]
+        assert mock_post.call_count == 2
+        second_call_body = mock_post.call_args_list[1].kwargs["json"]
+        assert second_call_body["first_id"] == 2
+        assert second_call_body["first_row_number"] == 2
+        assert second_call_body["first_timestamp"] == 1700000000
+
+    def test_retries_on_402_then_succeeds(self):
+        api = self._make_api()
+        error_response = Mock()
+        error_response.status_code = 402
+        error_response.headers = {}
+        http_error = requests.exceptions.HTTPError(response=error_response)
+
+        rate_limited = Mock()
+        rate_limited.raise_for_status.side_effect = http_error
+        success = self._reports_response([])
+
+        with patch("requests.get", return_value=self._tags_response()):
+            with patch("requests.post", side_effect=[rate_limited, success]):
+                with patch("time.sleep") as mock_sleep:
+                    entries = api._fetch_reports_entries("2025-01-01", "2025-01-02")
+
+        assert entries == []
+        mock_sleep.assert_called_once()
+
+    def test_tag_lookup_cached_across_calls(self):
+        api = self._make_api()
+        with patch("requests.get", return_value=self._tags_response()) as mock_get:
+            with patch("requests.post", return_value=self._reports_response([])):
+                api._fetch_reports_entries("2025-01-01", "2025-01-02")
+                api._fetch_reports_entries("2025-02-01", "2025-02-02")
+
+        assert mock_get.call_count == 1
+
+
+class TestTogglRemoveDuplicatesReportsAPI:
+    """Test that remove_duplicates() fetches via the Reports API and filters by project."""
+
+    def _make_api(self):
+        return TogglAPI("token", 123, 456, ["jellyfin"])
+
+    def test_filters_to_configured_project(self):
+        api = self._make_api()
+        entries = [
+            {"id": 1, "project_id": 456, "description": "A", "start": "2025-06-01T10:00:00Z", "stop": None},
+            {"id": 2, "project_id": 999, "description": "B", "start": "2025-06-01T10:00:00Z", "stop": None},
+        ]
+
+        with patch.object(api, "_fetch_reports_entries", return_value=entries) as mock_fetch:
+            with patch("requests.delete") as mock_delete:
+                api.remove_duplicates()
+
+        mock_fetch.assert_called_once()
+        mock_delete.assert_not_called()  # no duplicates among the one project-456 entry
+
+    def test_402_during_fetch_skips_gracefully(self):
+        api = self._make_api()
+        error_response = Mock()
+        error_response.status_code = 402
+        http_error = requests.exceptions.HTTPError(response=error_response)
+
+        with patch.object(api, "_fetch_reports_entries", side_effect=http_error):
+            api.remove_duplicates()  # must not raise
+
+    def test_non_402_error_during_fetch_reraises(self):
+        api = self._make_api()
+        error_response = Mock()
+        error_response.status_code = 500
+        http_error = requests.exceptions.HTTPError(response=error_response)
+
+        with patch.object(api, "_fetch_reports_entries", side_effect=http_error):
+            with pytest.raises(requests.exceptions.HTTPError):
+                api.remove_duplicates()
+
 
 class TestTogglFindExistingEntry:
     """Test TogglAPI.find_existing_entry() matching logic."""
@@ -485,14 +643,10 @@ class TestTogglRemoveDuplicates:
         return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     def _run(self, api, entries):
-        page = Mock()
-        page.json.return_value = entries
-        empty_page = Mock()
-        empty_page.json.return_value = []
-        with patch("requests.get", side_effect=[page, empty_page]) as mock_get:
+        with patch.object(api, "_fetch_reports_entries", return_value=entries) as mock_fetch:
             with patch("requests.delete") as mock_delete:
                 api.remove_duplicates()
-        return mock_get, mock_delete
+        return mock_fetch, mock_delete
 
     def test_collapses_sessions_split_across_days(self):
         """A movie paused overnight and finished the next day is the same watch-through."""
