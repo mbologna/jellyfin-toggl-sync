@@ -1,0 +1,15 @@
+.env
+.env.template
+.git
+.gitignore
+.dockerignore
+.github
+.pre-commit-config.yaml
+Makefile
+k8s/
+tests/
+*.md
+!README.md
+__pycache__/
+*.pyc
+.venv/

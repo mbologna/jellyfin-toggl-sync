@@ -1,5 +1,7 @@
 # jellyfin-toggl-sync
 
+[![CI](https://github.com/mbologna/jellyfin-toggl-sync/actions/workflows/ci.yml/badge.svg)](https://github.com/mbologna/jellyfin-toggl-sync/actions/workflows/ci.yml)
+
 > Automatically sync Jellyfin playback sessions to Toggl for complete time tracking
 
 ## Motivation
