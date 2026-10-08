@@ -28,6 +28,7 @@ class TogglAPI:
         self._cached_entries = None
         self._cache_timestamp = None
         self._cache_duration = 300  # Cache for 5 minutes
+        self._cache_start_date = None
         self._rate_limited = False
         self._tag_id_to_name = None
 
@@ -149,8 +150,18 @@ class TogglAPI:
         return datetime.fromisoformat(timestamp_str.replace("Z", "+00:00")).replace(microsecond=0)
 
     def get_cached_entries(self, start_date=None, force_refresh=False):
-        """Get cached Toggl entries or fetch if cache is stale."""
+        """Get cached Toggl entries or fetch if cache is stale.
+
+        A `start_date` from an earlier call is remembered and reused on later
+        no-arg calls, so a cache expiry mid-run (e.g. after a long rate-limit
+        wait) can't silently narrow dedup visibility back down to the core
+        API's short default range.
+        """
         now = time.time()
+        if start_date:
+            self._cache_start_date = start_date
+        effective_start_date = start_date or self._cache_start_date
+
         if (
             force_refresh
             or self._cached_entries is None
@@ -158,9 +169,9 @@ class TogglAPI:
             or now - self._cache_timestamp > self._cache_duration
         ):
             try:
-                if start_date:
+                if effective_start_date:
                     end_date = datetime.now().strftime("%Y-%m-%d")
-                    self._cached_entries = self._fetch_reports_entries(start_date, end_date)
+                    self._cached_entries = self._fetch_reports_entries(effective_start_date, end_date)
                 else:
                     response = requests.get(
                         f"{self.BASE_URL}/me/time_entries",

@@ -263,6 +263,25 @@ class TestTogglGetCachedEntries:
         mock_fetch.assert_called_once()
         mock_get.assert_not_called()
 
+    def test_remembered_start_date_survives_cache_expiry(self):
+        """A stale cache on a later no-arg call still uses the Reports API with the
+        remembered start_date, instead of silently narrowing to /me/time_entries."""
+        api = self._make_api()
+
+        with patch.object(api, "_fetch_reports_entries", return_value=[{"id": 1}]):
+            with patch("requests.get") as mock_get:
+                api.get_cached_entries(start_date="2025-01-01")
+
+        api._cache_timestamp = time.time() - api._cache_duration - 1  # force staleness
+
+        with patch.object(api, "_fetch_reports_entries", return_value=[{"id": 2}]) as mock_fetch:
+            with patch("requests.get") as mock_get:
+                result = api.get_cached_entries()
+
+        assert result == [{"id": 2}]
+        mock_fetch.assert_called_once_with("2025-01-01", datetime.now().strftime("%Y-%m-%d"))
+        mock_get.assert_not_called()
+
 
 class TestTogglReportsAPI:
     """Test TogglAPI._fetch_reports_page() / _fetch_reports_entries()."""
