@@ -35,7 +35,9 @@ class JellyfinAPI:
         self._item_cache = {}
 
     def _headers(self):
-        return {"X-Emby-Token": self.api_key}
+        # Jellyfin 12 disables the legacy X-Emby-Token header by default; this
+        # Authorization scheme works on 10.11 and 12 alike.
+        return {"Authorization": f'MediaBrowser Token="{self.api_key}"'}
 
     def fetch_history(self, since_dt, min_duration_seconds):
         """Return PlaybackActivity rows newer than since_dt with PlayDuration >= min_duration_seconds."""

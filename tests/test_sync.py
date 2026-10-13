@@ -160,6 +160,20 @@ class TestJellyfinAPI:
         sql = mock_post.call_args.kwargs["json"]["CustomQueryString"]
         assert "UserId = '00000000000040008000000000000000'" in sql
 
+    def test_requests_use_authorization_header(self):
+        api = JellyfinAPI("https://jellyfin.example.com", "key")
+        response_mock = Mock()
+        response_mock.json.return_value = {"colums": [], "results": [], "message": ""}
+
+        with patch("requests.post", return_value=response_mock) as mock_post:
+            api.fetch_history(datetime(2026, 1, 15), 600)
+        with patch("requests.get", return_value=response_mock) as mock_get:
+            api.get_item_details("item1", "00000000000040008000000000000000")
+
+        expected = {"Authorization": 'MediaBrowser Token="key"'}
+        assert mock_post.call_args.kwargs["headers"] == expected
+        assert mock_get.call_args.kwargs["headers"] == expected
+
     def test_get_item_details_caches(self):
         api = JellyfinAPI("https://jellyfin.example.com", "key")
         response_mock = Mock()
